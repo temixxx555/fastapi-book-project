@@ -1,0 +1,70 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Debug SSH Connection
+        env:
+          PRIVATE_KEY: ${{ secrets.AWS_PRIVATE_KEY }}
+          HOST: ${{ secrets.AWS_HOST }}
+          USER: ubuntu
+        run: |
+          echo "$PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          ssh -vvv -o StrictHostKeyChecking=no -i private_key.pem $USER@$HOST "echo 'SSH Connection Successful'"
+
+      - name: Deploy to AWS EC2
+        env:
+          PRIVATE_KEY: ${{ secrets.AWS_PRIVATE_KEY }}
+          HOST: ${{ secrets.AWS_HOST }}
+          USER: ubuntu
+        run: |
+          echo "$PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+          ssh -o StrictHostKeyChecking=no -i private_key.pem $USER@$HOST << 'EOF'
+            set -e  # Exit on error
+            echo "Starting deployment on EC2..."
+            
+            cd /home/ubuntu/fastapi-book-project || exit 1
+      
+            # Stop FastAPI service and kill any existing Gunicorn processes
+            echo "Stopping FastAPI service..."
+            sudo systemctl stop fastapi || true
+            sleep 2  # Wait for shutdown
+            sudo pkill -9 -f gunicorn || true  # Force kill Gunicorn processes
+      
+            # Ensure systemd is reloaded
+            sudo systemctl daemon-reload || true
+      
+            # Pull latest code and install dependencies
+            echo "Pulling latest code..."
+            git pull origin main || exit 1
+            source env/bin/activate || exit 1
+            pip install -r requirements.txt || exit 1
+      
+            # Restart FastAPI service
+            echo "Starting FastAPI service..."
+            sudo systemctl start fastapi || exit 1
+      
+            # Wait for FastAPI to boot up before restarting Nginx
+            sleep 5
+            sudo systemctl restart nginx || exit 1
+      
+            # Check Gunicorn logs for debugging
+            sudo journalctl -u fastapi --no-pager -n 50
+            
+            echo "Deployment successful!"
+          EOF
+      
+      
+      
